@@ -1,0 +1,5 @@
+src/secret.gs
+.clasp.json
+.clasprc.json
+node_modules/
+.DS_Store
