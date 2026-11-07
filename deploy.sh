@@ -10,7 +10,7 @@ CLASP=(npx --yes @google/clasp@3)
 ENV_FILE="${ENV_FILE:-../records/.env}"
 ACCOUNT="${ACCOUNT:-evgeniyivanets@gmail.com}" # той самий, що ACCOUNT у src/config.gs
 
-who=$("${CLASP[@]}" show-authorized-user 2>/dev/null | grep -Eo '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+' | head -1 || true)
+who=$("${CLASP[@]}" show-authorized-user 2>/dev/null | grep -Eo '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' | head -1 || true)
 if [ "$(echo "$who" | tr A-Z a-z)" != "$(echo "$ACCOUNT" | tr A-Z a-z)" ]; then
   echo "clasp залогінений як '${who:-нікого}', а потрібен $ACCOUNT." >&2
   echo "Виконай: ${CLASP[*]} logout && ${CLASP[*]} login   (у браузері обери $ACCOUNT)" >&2
