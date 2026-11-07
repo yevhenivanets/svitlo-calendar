@@ -3,6 +3,9 @@
  * (той самий ключ, напр. QUEUE = 3.1). Script Properties мають пріоритет.
  */
 var DEFAULTS = {
+  ACCOUNT: 'evgeniyivanets@gmail.com',   // під яким Google-акаунтом має працювати скрипт (інший - помилка)
+  PUBLIC: 'true',                        // календар публічний: будь-хто з посиланням бачить і може додати собі
+  SHARE_WITH: '',                        // Gmail-и через кому - поділитися напряму (прийде лист-запрошення)
   CHANNEL: 'SvitloHolovanivskohoRayonu', // публічний канал, https://t.me/s/<CHANNEL>
   QUEUE: '2.2',                          // черга ГПВ
   CALENDAR: 'Світло 2.2',                // назва календаря (створиться сам) або ID календаря (з "@")

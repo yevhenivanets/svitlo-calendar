@@ -5,17 +5,68 @@
  *   status  - що в стані: останні пости, графіки на дати, помилки
  *   cleanup - видалити всі майбутні події скрипта з календаря (напр. перед зміною CALENDAR)
  *   stop    - вимкнути таймер
+ *   share   - застосувати PUBLIC / SHARE_WITH і показати посилання на календар (setup теж це робить)
  */
 
 var TAG = 'svitlo';
 
 function setup() {
+  checkAccount_();
   stop();
   var every = Number(cfg('CHECK_EVERY_MIN'));
   ScriptApp.newTrigger('run').timeBased().everyMinutes(every).create();
   var cal = calendar_();
-  console.log('Календар: "' + cal.getName() + '" (' + cal.getId() + '), таймер: кожні ' + every + ' хв');
+  console.log('Акаунт: ' + Session.getEffectiveUser().getEmail() + '; календар: "' + cal.getName() + '"; таймер: кожні ' + every + ' хв');
+  share();
   run();
+}
+
+/** Скрипт має працювати лише під акаунтом ACCOUNT (щоб не потрапити в робочий календар). */
+function checkAccount_() {
+  var want = String(cfg('ACCOUNT')).trim().toLowerCase();
+  var me = String(Session.getEffectiveUser().getEmail()).toLowerCase();
+  if (want && me !== want) {
+    throw new Error('Скрипт запущено під ' + (me || 'невідомим акаунтом') + ', а має бути ' + want +
+      '. Відкрий редактор під потрібним акаунтом (або зміни Script Property ACCOUNT).');
+  }
+}
+
+/** Публічність і доступ для родини через Calendar API (advanced service), лише додає права. */
+function share() {
+  checkAccount_();
+  var cal = calendar_();
+  var id = cal.getId();
+  var acl = (Calendar.Acl.list(id).items || []);
+  var has = function (type, value) {
+    return acl.some(function (r) { return r.scope.type === type && (value === undefined || String(r.scope.value).toLowerCase() === value); });
+  };
+  var isPublic = String(cfg('PUBLIC')).toLowerCase() === 'true';
+  if (isPublic && !has('default')) {
+    Calendar.Acl.insert({ role: 'reader', scope: { type: 'default' } }, id);
+    console.log('Календар став публічним');
+  }
+  if (!isPublic) {
+    acl.filter(function (r) { return r.scope.type === 'default'; }).forEach(function (r) {
+      Calendar.Acl.remove(id, r.id);
+      console.log('Публічний доступ вимкнено');
+    });
+  }
+  String(cfg('SHARE_WITH')).split(',').map(function (s) { return s.trim().toLowerCase(); }).filter(String).forEach(function (email) {
+    if (has('user', email)) return;
+    Calendar.Acl.insert({ role: 'reader', scope: { type: 'user', value: email } }, id, { sendNotifications: true });
+    console.log('Надано доступ: ' + email + ' (прийде лист-запрошення)');
+  });
+  console.log(links_(id));
+}
+
+function links_(id) {
+  var enc = encodeURIComponent(id);
+  var cid = Utilities.base64Encode(id).replace(/=+$/, '');
+  return 'Посилання на календар:\n' +
+    '  додати собі (Google Calendar, оновлюється одразу): https://calendar.google.com/calendar/u/0?cid=' + cid + '\n' +
+    '  переглянути в браузері: https://calendar.google.com/calendar/embed?src=' + enc + '&ctz=Europe%2FKiev\n' +
+    '  iCal (Apple / Outlook, оновлюється рідше): https://calendar.google.com/calendar/ical/' + enc + '/public/basic.ics\n' +
+    '  (два останні працюють, лише якщо PUBLIC = true)';
 }
 
 function stop() {
@@ -28,6 +79,7 @@ function run() {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return;
   try {
+    checkAccount_();
     var state = loadState_();
     var changed = ingest_(state);
     var res = sync_(state);
@@ -166,7 +218,12 @@ function calendar_() {
     return byId;
   }
   var found = CalendarApp.getOwnedCalendarsByName(name);
-  return found.length ? found[0] : CalendarApp.createCalendar(name, { color: CalendarApp.Color.YELLOW });
+  if (found.length) return found[0];
+  var cal = CalendarApp.createCalendar(name, { color: CalendarApp.Color.YELLOW });
+  cal.setTimeZone('Europe/Kiev');
+  cal.setDescription('Графік відключень світла, черга ' + cfg('QUEUE') + ', з каналу t.me/' + cfg('CHANNEL') +
+    '. Оновлюється автоматично (github.com/yevhenivanets/svitlo-calendar).');
+  return cal;
 }
 
 function sync_(state) {
