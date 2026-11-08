@@ -95,7 +95,10 @@ function run() {
 function status() {
   var s = loadState_();
   console.log(JSON.stringify({ queue: cfg('QUEUE'), channel: cfg('CHANNEL'), calendar: cfg('CALENDAR'),
-    schedules: s.schedules, errors: s.errors.slice(-10), seen: Object.keys(s.seen).length }, null, 2));
+    schedules: s.schedules, errors: s.errors.slice(-10), seen: Object.keys(s.seen).length,
+    geminiCalls: s.geminiCalls || 0,
+    geminiPausedUntil: s.geminiPauseUntil > Date.now() ? Utilities.formatDate(new Date(s.geminiPauseUntil), 'Europe/Kiev', 'dd.MM HH:mm') : null
+  }, null, 2));
 }
 
 function cleanup() {
@@ -143,32 +146,61 @@ function ingest_(state) {
   var posts = parsePosts(resp.getContentText());
   if (!posts.length) throw new Error('t.me/s/' + channel + ': постів не знайдено (канал приватний або змінилась верстка?)');
 
+  // Gemini - лише запасний варіант: коли regex не впевнений у даті графіка. Після помилки API - пауза, а не повтор кожні 5 хв.
+  var geminiOk = !(state.geminiPauseUntil > Date.now());
   var changed = [];
   posts.forEach(function (p) {
     var h = hashText(p.text + '|' + queue);
     if (state.seen[p.id] === h) return;
     var old = p.time && new Date(p.time).getTime() < Date.now() - 2 * 86400000;
-    if (old || !looksLikeSchedule(p.text)) { state.seen[p.id] = h; return; } // старе або не графік - без Gemini
-
-    var g = gemini_(p, queue); // помилка мережі / API -> виняток, пост перечитаємо наступного разу
-    state.seen[p.id] = h;
-    if (g.kind !== 'gpv_schedule' && g.kind !== 'gpv_change') return;
+    if (old || !looksLikeSchedule(p.text)) { state.seen[p.id] = h; return; } // старе або не графік
 
     var rx = regexQueue(p.text, queue);
-    if (rx === null) return; // у пості немає цієї черги
-    if (!sameIntervals(g.intervals, rx)) {
-      logError_(state, 'Пост #' + p.id + ': Gemini ' + JSON.stringify(g.intervals) + ' != regex ' + JSON.stringify(rx) + ' - пропущено');
+    if (rx === null) { state.seen[p.id] = h; return; } // у пості немає цієї черги
+    if (hasBadInterval(rx)) {
+      state.seen[p.id] = h;
+      logError_(state, 'Пост #' + p.id + ': не розібрано рядок черги ' + JSON.stringify(rx) + ' - пропущено');
       return;
     }
     var pub = ymd(new Date(p.time));
-    if (!g.target_date || g.target_date < addDays(pub, -1) || g.target_date > addDays(pub, 2)) {
-      logError_(state, 'Пост #' + p.id + ': дивна дата графіка ' + g.target_date + ' (опубліковано ' + pub + ') - пропущено');
-      return;
+    var inRange = function (d) { return d && d >= addDays(pub, -1) && d <= addDays(pub, 2); };
+    var hd = regexHeader(p.text);
+    var date = hd.kind && inRange(hd.date) ? hd.date : null;
+    var via = 'regex';
+
+    if (!date) {
+      if (!geminiOk) return; // пауза Gemini - пост перечитаємо після неї
+      var g;
+      try {
+        g = gemini_(p, queue);
+        state.geminiCalls = (state.geminiCalls || 0) + 1;
+      } catch (e) {
+        geminiOk = false;
+        state.geminiPauseUntil = Date.now() + Number(cfg('GEMINI_PAUSE_MIN')) * 60000;
+        logError_(state, 'Пост #' + p.id + ': regex не визначив дату, а Gemini недоступний (' + String(e.message).slice(0, 160) +
+          ') - пауза ' + cfg('GEMINI_PAUSE_MIN') + ' хв');
+        return;
+      }
+      state.seen[p.id] = h;
+      if (g.kind !== 'gpv_schedule' && g.kind !== 'gpv_change') return;
+      if (!sameIntervals(g.intervals, rx)) {
+        logError_(state, 'Пост #' + p.id + ': Gemini ' + JSON.stringify(g.intervals) + ' != regex ' + JSON.stringify(rx) + ' - пропущено');
+        return;
+      }
+      if (!inRange(g.target_date)) {
+        logError_(state, 'Пост #' + p.id + ': дивна дата графіка ' + g.target_date + ' (опубліковано ' + pub + ') - пропущено');
+        return;
+      }
+      date = g.target_date;
+      via = 'Gemini';
     }
-    var cur = state.schedules[g.target_date];
+    state.seen[p.id] = h;
+
+    var cur = state.schedules[date];
     if (cur && cur.post > p.id) return; // уже є новіший пост на цю дату
-    state.schedules[g.target_date] = { post: p.id, intervals: rx, at: p.time };
-    changed.push(g.target_date + ' (#' + p.id + ')');
+    if (cur && sameIntervals(cur.intervals, rx)) { cur.post = p.id; cur.at = p.time; return; } // для черги нічого не змінилось
+    state.schedules[date] = { post: p.id, intervals: rx, at: p.time, via: via };
+    changed.push(date + ' (#' + p.id + ', ' + via + ')');
   });
   return changed;
 }

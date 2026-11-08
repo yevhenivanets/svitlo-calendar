@@ -63,6 +63,30 @@ function regexQueue(text, queue) {
   return res;
 }
 
+/**
+ * Тип і дата графіка з шапки поста без Gemini.
+ * Дата графіка - та, що стоїть поруч із "за розпорядженням НЕК Укренерго":
+ *   "07.11.2026 за розпорядженням ... буде діяти", "На 08.11.2026 за розпорядженням ... внесено зміни",
+ *   "За розпорядженням НЕК "Укренерго" 05.11.2026 внесено зміни" (а "Зміни на 22:13 04.11.2026" - час публікації, не дата).
+ * Повертає {kind: 'gpv_schedule'|'gpv_change'|null, date: 'YYYY-MM-DD'|null}; date = null, якщо дат немає або вони різні.
+ */
+function regexHeader(text) {
+  var kind = /внесено\s+зміни/i.test(text) ? 'gpv_change' : /буде\s+діяти/i.test(text) ? 'gpv_schedule' : null;
+  var nek = 'за\\s+розпорядженням\\s+НЕК\\s*["“«]?\\s*Укренерго\\s*["”»]?';
+  var res = [new RegExp('(\\d{2})\\.(\\d{2})\\.(\\d{4})\\s+' + nek, 'gi'), new RegExp(nek + '\\s+(\\d{2})\\.(\\d{2})\\.(\\d{4})', 'gi')];
+  var dates = {};
+  res.forEach(function (re) {
+    var m;
+    while ((m = re.exec(text))) dates[m[3] + '-' + m[2] + '-' + m[1]] = true;
+  });
+  var list = Object.keys(dates);
+  return { kind: kind, date: list.length === 1 ? list[0] : null };
+}
+
+function hasBadInterval(iv) {
+  return iv.some(function (x) { return x.start === 'ERR' || x.end === 'ERR'; });
+}
+
 function sameIntervals(a, b) {
   if (!a || !b || a.length !== b.length) return false;
   for (var i = 0; i < a.length; i++) {
@@ -136,5 +160,6 @@ function planSync(desired, existing, managedDates, now) {
 
 if (typeof module !== 'undefined') {
   module.exports = { parsePosts: parsePosts, hashText: hashText, looksLikeSchedule: looksLikeSchedule, regexQueue: regexQueue,
+    regexHeader: regexHeader, hasBadInterval: hasBadInterval,
     sameIntervals: sameIntervals, desiredEvents: desiredEvents, planSync: planSync, ymd: ymd, addDays: addDays };
 }

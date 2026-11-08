@@ -40,6 +40,7 @@ const state = api.loadState_();
 const changed = api.ingest_(state);
 console.log('Черга ' + api.cfg('QUEUE') + ', канал ' + api.cfg('CHANNEL'));
 console.log('Графіки з постів:', changed.join(', ') || '-');
+console.log('Викликів Gemini: ' + (state.geminiCalls || 0));
 for (const [d, s] of Object.entries(state.schedules).sort()) {
   console.log('  ' + d + ' (#' + s.post + '): ' + s.intervals.map((i) => i.start + '-' + i.end).join(', '));
 }

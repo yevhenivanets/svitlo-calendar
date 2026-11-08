@@ -110,3 +110,37 @@ test('planSync: дублікати однієї події видаляютьс�
   assert.strictEqual(plan.del.length, 1);
   assert.strictEqual(plan.create.length, 0);
 });
+
+test('regexHeader: дата і тип графіка без Gemini на всіх постах-графіках #1715-#1739', () => {
+  const live = C.parsePosts(fs.readFileSync(path.join(__dirname, 'fixtures/channel_2026-11-08.html'), 'utf8'));
+  const all = new Map(posts.concat(live).map((p) => [p.id, p]));
+  const want = {
+    1715: '03.11', 1716: '03.11', 1717: '03.11', 1718: '03.11',
+    1719: '04.11', // "Зміни на 21:53 03.11.2026", але графік на 04.11
+    1720: '04.11', 1723: '04.11',
+    1724: '05.11', 1725: '05.11', 1726: '05.11', 1727: '05.11', 1728: '05.11', 1729: '05.11',
+    1730: '06.11', 1731: '07.11', 1735: '08.11', 1736: '08.11', 1737: '08.11', 1738: '08.11', 1739: '08.11',
+  };
+  const sched = [...all.values()].filter((p) => C.looksLikeSchedule(p.text)).map((p) => p.id).sort();
+  assert.deepStrictEqual(sched, Object.keys(want).map(Number).sort());
+  for (const [id, dm] of Object.entries(want)) {
+    const h = C.regexHeader(all.get(Number(id)).text);
+    assert.strictEqual(h.date, '2026-' + dm.slice(3) + '-' + dm.slice(0, 2), '#' + id);
+    assert.ok(['gpv_schedule', 'gpv_change'].includes(h.kind), '#' + id);
+  }
+  assert.strictEqual(C.regexHeader(all.get(1731).text).kind, 'gpv_schedule');
+  assert.strictEqual(C.regexHeader(all.get(1739).text).kind, 'gpv_change');
+  assert.deepStrictEqual(C.regexQueue(all.get(1739).text, '2.2'), [
+    { start: '06:00', end: '08:00' }, { start: '10:00', end: '12:00' }, { start: '22:00', end: '24:00' }]);
+});
+
+test('regexHeader: незнайомий формат або дві різні дати -> date null (тоді Gemini)', () => {
+  assert.strictEqual(C.regexHeader('Графік на завтра:\nЧерга 2.2: 02-04').date, null);
+  assert.strictEqual(C.regexHeader('07.11.2026 за розпорядженням НЕК "Укренерго" ... За розпорядженням НЕК "Укренерго" 08.11.2026').date, null);
+  assert.strictEqual(C.regexHeader('Зміни на 22:13 04.11.2026 до графіка\nЧерга 2.2: 02-04').date, null);
+});
+
+test('hasBadInterval: нерозібраний інтервал', () => {
+  assert.ok(C.hasBadInterval(C.regexQueue('Черга 2.2: 02-04, з 10 до 12', '2.2')));
+  assert.ok(!C.hasBadInterval(C.regexQueue('Черга 2.2: 02-04, 20-21:30', '2.2')));
+});
